@@ -1,0 +1,74 @@
+# Free self-hosted Judge0 CE (no RapidAPI key). Run from hiremind_backend:
+#   docker compose -f docker-compose.judge0.yml down
+#   docker compose -f docker-compose.judge0.yml up -d db redis
+#   timeout /t 15
+#   docker compose -f docker-compose.judge0.yml up -d
+# API: http://127.0.0.1:2358/docs
+
+name: hiremind-judge0
+
+x-logging:
+  &default-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 100M
+
+services:
+  server:
+    # cgv2 image works on Docker Desktop / cgroup v2 (Windows WSL2)
+    image: mrkushalsm/judge0:cgv2
+    volumes:
+      - ./judge0/judge0.conf:/judge0.conf:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    ports:
+      - "2358:2358"
+    privileged: true
+    <<: *default-logging
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  workers:
+    image: mrkushalsm/judge0:cgv2
+    command: ["./scripts/workers"]
+    volumes:
+      - ./judge0/judge0.conf:/judge0.conf:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    privileged: true
+    <<: *default-logging
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: judge0
+      POSTGRES_DB: judge0
+      POSTGRES_PASSWORD: hiremind_judge0_pg_dev
+    volumes:
+      - judge0_pgdata:/var/lib/postgresql/data
+    <<: *default-logging
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # Password must match REDIS_PASSWORD in judge0/judge0.conf
+    command: ["redis-server", "--requirepass", "hiremind_judge0_redis_dev"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "hiremind_judge0_redis_dev", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    <<: *default-logging
+    restart: unless-stopped
+
+volumes:
+  judge0_pgdata:
